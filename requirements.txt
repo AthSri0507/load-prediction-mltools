@@ -1,5 +1,5 @@
 # Core data stack
-numpy>=1.23
+numpy>=1.23,<2.1
 pandas>=2.0
 scikit-learn>=1.2
 joblib>=1.2
@@ -14,4 +14,5 @@ matplotlib>=3.7
 # Experiment tracking
 mlflow>=2.0
 
-evidently
+# Model monitoring
+evidently>=0.6,<0.7

@@ -1,14 +1,30 @@
-# Use official python image
-FROM python:3.10.11-slim
+FROM python:3.10-slim
 
-# Set working directory inside container
+# Avoid Python buffering + speed up
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+# Set workdir
 WORKDIR /app
 
-# Copy project files into container
+# System deps (needed for xgboost, numpy, tensorflow)
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements first (layer caching)
+COPY requirements.txt .
+
+# Upgrade pip and install dependencies
+RUN pip install --upgrade pip && \
+    pip install -r requirements.txt
+
+# Copy project files
 COPY . .
 
-# Install required packages
-RUN pip install --no-cache-dir -r requirements.txt
+# Create output directories if they don't exist
+RUN mkdir -p energy_load_next/models mlruns
 
-# Run your training pipeline by default
-CMD ["python", "train_nextstep_load3.py", "--csv", "smart_grid_dataset.csv", "--plots", "--mlflow"]
+# Flexible entrypoint - users pass args at runtime
+ENTRYPOINT ["python", "train_nextstep_load3.py"]

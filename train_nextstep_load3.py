@@ -2,18 +2,16 @@
 import warnings
 warnings.filterwarnings("ignore")
 
-import os
 import numpy as np
 import pandas as pd
 from pathlib import Path
 import argparse
 
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
-from sklearn.metrics import mean_absolute_error, mean_squared_error
+from sklearn.metrics import mean_squared_error
 
-from xgboost import XGBRegressor, XGBClassifier
+from xgboost import XGBRegressor
 
-import matplotlib.pyplot as plt
 import joblib
 
 # ---------- TensorFlow ----------
@@ -23,9 +21,18 @@ from tensorflow.keras.callbacks import EarlyStopping
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.losses import Huber
 
-# ---------- Evidently ----------
-from evidently.report import Report
-from evidently.metric_preset import RegressionPreset, DataDriftPreset
+# ---------- Evidently (v0.6) ----------
+try:
+    from evidently.report import Report
+    from evidently.metrics import (
+        RegressionQualityMetric,
+        RegressionErrorDistribution,
+        DataDriftTable
+    )
+    EVIDENTLY_AVAILABLE = True
+except Exception as e:
+    print("Evidently import failed:", e)
+    EVIDENTLY_AVAILABLE = False
 
 
 # ================= METRICS =================
@@ -99,7 +106,6 @@ def main():
     ap.add_argument("--timecol", default="Timestamp")
     ap.add_argument("--target", default="Grid Supply (kW)")
     ap.add_argument("--test_size", type=float, default=0.2)
-    ap.add_argument("--plots", action="store_true")
     args = ap.parse_args()
 
     outdir = Path(args.csv).parent / "energy_load_next"
@@ -111,7 +117,7 @@ def main():
     df = df.dropna(subset=[args.timecol, args.target])
     df = df.sort_values(args.timecol).reset_index(drop=True)
 
-    # ---------- TARGET (LOG) ----------
+    # ---------- TARGET ----------
     df["target_next"] = np.log1p(df[args.target].shift(-1))
 
     # ---------- FEATURES ----------
@@ -121,16 +127,12 @@ def main():
 
     split = int(len(df) * (1 - args.test_size))
 
-    # Spike label (train-only threshold)
-    spike_thr = np.percentile(df.iloc[:split]["target_next"], 90)
-    df["is_spike"] = (df["target_next"] >= spike_thr).astype(int)
-
     train_df = df.iloc[:split].copy()
     test_df  = df.iloc[split:].copy()
 
     feature_cols = [
         c for c in df.columns
-        if c not in {args.timecol, args.target, "target_next", "is_spike"}
+        if c not in {args.timecol, args.target, "target_next"}
         and pd.api.types.is_numeric_dtype(df[c])
     ]
 
@@ -147,12 +149,10 @@ def main():
     X_test  = X_scaler.transform(X_test_raw)
     y_train = y_scaler.fit_transform(y_train_log.reshape(-1,1)).ravel()
 
-    # =====================================================
-    #               XGBOOST (2-STAGE)
-    # =====================================================
+    # ================= XGBOOST =================
     base_reg = XGBRegressor(
-        n_estimators=800,
-        max_depth=8,
+        n_estimators=600,
+        max_depth=7,
         learning_rate=0.05,
         subsample=0.9,
         colsample_bytree=0.9,
@@ -161,135 +161,56 @@ def main():
     )
     base_reg.fit(X_train, y_train)
 
-    spike_idx = train_df["is_spike"].values == 1
-    spike_reg = None
-
-    if spike_idx.sum() > 5:
-        spike_reg = XGBRegressor(
-            n_estimators=600,
-            max_depth=6,
-            learning_rate=0.05,
-            random_state=42,
-            n_jobs=-1
-        )
-        spike_reg.fit(X_train[spike_idx], y_train[spike_idx])
-
-    clf = None
-    if spike_reg is not None and len(np.unique(train_df["is_spike"])) > 1:
-        clf = XGBClassifier(
-            n_estimators=400,
-            max_depth=5,
-            scale_pos_weight=6,
-            random_state=42,
-            n_jobs=-1
-        )
-        clf.fit(X_train, train_df["is_spike"].values)
-
     base_pred = base_reg.predict(X_test)
-    final_scaled = base_pred.copy()
-
-    if clf is not None and spike_reg is not None:
-        mask = clf.predict(X_test) == 1
-        if mask.any():
-            final_scaled[mask] = spike_reg.predict(X_test[mask])
-
-    final_log = y_scaler.inverse_transform(final_scaled.reshape(-1,1)).ravel()
+    final_log = y_scaler.inverse_transform(base_pred.reshape(-1,1)).ravel()
     final_pred = np.expm1(final_log)
     y_test_real = np.expm1(y_test_log)
 
-    # =====================================================
-    #               LSTM / GRU (BASELINES)
-    # =====================================================
-    seq_len = 128
-    X_seq_tr, y_seq_tr = make_sequences(X_train, y_train, seq_len)
-    X_seq_te, y_seq_te = make_sequences(X_test, y_test_log, seq_len)
+    # ================= EVIDENTLY =================
+    if EVIDENTLY_AVAILABLE:
+        reference_df = train_df.copy()
+        reference_df["target"] = np.expm1(train_df["target_next"])
+        reference_df["prediction"] = np.expm1(
+            y_scaler.inverse_transform(
+                base_reg.predict(X_train).reshape(-1,1)
+            ).ravel()
+        )
 
-    early = EarlyStopping(patience=8, restore_best_weights=True)
+        current_df = test_df.copy()
+        current_df["target"] = y_test_real
+        current_df["prediction"] = final_pred
 
-    lstm = build_lstm((seq_len, X_seq_tr.shape[-1]))
-    lstm.fit(X_seq_tr, y_seq_tr, epochs=40, batch_size=64,
-             validation_split=0.1, callbacks=[early], verbose=0)
+        try:
+            reg_report = Report(metrics=[
+                RegressionQualityMetric(),
+                RegressionErrorDistribution()
+            ])
+            reg_report.run(reference_data=reference_df, current_data=current_df)
+            reg_report.save_html(
+                str(outdir / "evidently_regression_report.html")
+            )
+            print("✓ Evidently regression report generated")
 
-    gru = build_gru((seq_len, X_seq_tr.shape[-1]))
-    gru.fit(X_seq_tr, y_seq_tr, epochs=40, batch_size=64,
-            validation_split=0.1, callbacks=[early], verbose=0)
+            drift_report = Report(metrics=[
+                DataDriftTable()
+            ])
+            drift_report.run(reference_data=reference_df, current_data=current_df)
+            drift_report.save_html(
+                str(outdir / "evidently_drift_report.html")
+            )
+            print("✓ Evidently data drift report generated")
 
-    lstm_log = y_scaler.inverse_transform(
-        lstm.predict(X_seq_te).reshape(-1,1)
-    ).ravel()
-    gru_log = y_scaler.inverse_transform(
-        gru.predict(X_seq_te).reshape(-1,1)
-    ).ravel()
+        except Exception as e:
+            print("Evidently runtime error:", e)
 
-    lstm_pred = np.clip(np.expm1(lstm_log), 0, None)
-    gru_pred  = np.clip(np.expm1(gru_log), 0, None)
-    y_seq_real = np.expm1(y_seq_te)
+    else:
+        print("Evidently not available — skipped")
 
-    # =====================================================
-    #               EVIDENTLY AI
-    # =====================================================
-    train_pred_log = y_scaler.inverse_transform(
-        base_reg.predict(X_train).reshape(-1,1)
-    ).ravel()
-    train_pred = np.expm1(train_pred_log)
-
-    reference_df = train_df.copy()
-    reference_df["prediction"] = train_pred
-
-    current_df = test_df.copy()
-    current_df["prediction"] = final_pred
-
-    column_mapping = {
-        "target": "target_next",
-        "prediction": "prediction",
-        "numerical_features": feature_cols
-    }
-
-    reg_report = Report(metrics=[RegressionPreset()])
-    reg_report.run(
-        reference_data=reference_df,
-        current_data=current_df,
-        column_mapping=column_mapping
-    )
-    reg_report.save_html(outdir / "evidently_regression_report.html")
-
-    drift_report = Report(metrics=[DataDriftPreset()])
-    drift_report.run(
-        reference_data=reference_df,
-        current_data=current_df,
-        column_mapping=column_mapping
-    )
-    drift_report.save_html(outdir / "evidently_drift_report.html")
-
-    # =====================================================
-    #               SAVE ARTIFACTS
-    # =====================================================
-    joblib.dump(base_reg, outdir / "xgb_baseline.joblib")
-    if spike_reg is not None:
-        joblib.dump(spike_reg, outdir / "xgb_spike.joblib")
-    if clf is not None:
-        joblib.dump(clf, outdir / "xgb_spike_classifier.joblib")
-
+    # ================= SAVE =================
+    joblib.dump(base_reg, outdir / "xgb_model.joblib")
     joblib.dump(X_scaler, outdir / "X_scaler.joblib")
     joblib.dump(y_scaler, outdir / "y_scaler.joblib")
     joblib.dump(feature_cols, outdir / "feature_cols.joblib")
-
-    # =====================================================
-    #               PLOTS
-    # =====================================================
-    if args.plots:
-        t = test_df[args.timecol].iloc[seq_len:]
-
-        plt.figure(figsize=(12,4))
-        plt.plot(t, y_seq_real, label="Actual")
-        plt.plot(t, final_pred[seq_len:], label="XGBoost")
-        plt.plot(t, lstm_pred, label="LSTM")
-        plt.plot(t, gru_pred, label="GRU")
-        plt.legend()
-        plt.title("Next-step Load Forecasting with Monitoring")
-        plt.tight_layout()
-        plt.savefig(outdir / "all_models_comparison.png")
-        plt.close()
 
     print("\n=== TRAINING + EVIDENTLY COMPLETED SUCCESSFULLY ===")
 

@@ -1,0 +1,75 @@
+# ===============================
+# Python cache & temp files
+# ===============================
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.log
+
+# ===============================
+# Virtual environments
+# ===============================
+.venv/
+venv/
+env/
+
+# ===============================
+# Jupyter / IDE
+# ===============================
+.ipynb_checkpoints/
+.vscode/
+.idea/
+
+# ===============================
+# OS files
+# ===============================
+.DS_Store
+Thumbs.db
+
+# ===============================
+# Git
+# ===============================
+.git/
+.gitignore
+.github/
+
+# ===============================
+# ML artifacts (generated at runtime)
+# ===============================
+energy_load_next/
+models/
+*.h5
+*.joblib
+*.pkl
+*.json
+
+# ===============================
+# MLflow local runs
+# ===============================
+mlruns/
+
+# ===============================
+# DVC internals (CI will not need cache)
+# ===============================
+.dvc/cache/
+.dvc/tmp/
+
+# ===============================
+# Large datasets (mount or copy explicitly if needed)
+# ===============================
+smart_grid_dataset.csv
+smart_grid_dataset (1).csv
+
+# ===============================
+# Plots & outputs
+# ===============================
+*.png
+*.jpg
+*.svg
+
+# ===============================
+# Build & dist
+# ===============================
+build/
+dist/
