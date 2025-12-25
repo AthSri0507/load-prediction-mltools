@@ -26,4 +26,4 @@ jobs:
 
       - name: Run training on CI dataset
         run: |
-          python train_nextstep_load3.py --csv smart_grid_dataset_ci.csv --plots
+          python train_nextstep_load3.py --csv smart_grid_dataset_ci.csv 
