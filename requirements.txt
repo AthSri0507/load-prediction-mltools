@@ -1,0 +1,15 @@
+# Core data stack
+numpy>=1.23
+pandas>=2.0
+scikit-learn>=1.2
+joblib>=1.2
+
+# Models
+xgboost>=1.7
+tensorflow>=2.10
+
+# Visualization
+matplotlib>=3.7
+
+# Experiment tracking
+mlflow>=2.0

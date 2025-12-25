@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Jupyter / logs
+.ipynb_checkpoints/
+logs/
+
+# VS Code
+.vscode/
+
+# DVC internal files
+.dvc/
+
+# MLflow local runs
+mlruns/
+
+# OS generated files
+*.DS_Store
+Thumbs.db
+
+# Build folders
+build/
+dist/
+
+# Generated model artifacts
+energy_load_next/
+models/
+*.h5
+*.joblib
+*.pkl
+
+# Large datasets (handled by DVC)
+smart_grid_dataset.csv
+
+mlflow.db
+
+

@@ -1,0 +1,51 @@
+schema: '2.0'
+stages:
+  train:
+    cmd: python train_nextstep_load3.py --csv "smart_grid_dataset.csv" --plots 
+      --mlflow
+    deps:
+    - path: requirements.txt
+      hash: md5
+      md5: 35a4359a9dab6ea71c62a553bf6ce430
+      size: 58
+    - path: smart_grid_dataset.csv
+      hash: md5
+      md5: 46c04a0dc0a0a91954f9c5f85170009d
+      size: 4967533
+    - path: train_nextstep_load3.py
+      hash: md5
+      md5: 483a79d6f29ea1ae41589d74674fe1c1
+      size: 17436
+    outs:
+    - path: energy_load_next/X_scaler.joblib
+      hash: md5
+      md5: e2984f4bc11a0fd98e5564bd6ee9fde3
+      size: 1439
+    - path: energy_load_next/feature_cols.joblib
+      hash: md5
+      md5: 94d053a301ae7c5047198f2c595be08e
+      size: 533
+    - path: energy_load_next/metrics_real.csv
+      hash: md5
+      md5: 1354c0f091389b5b3a58c78cb91a3cd2
+      size: 334
+    - path: energy_load_next/models/xgb_model.json
+      hash: md5
+      md5: 71c9bc3956f19112d9e179a604c91202
+      size: 11091622
+    - path: energy_load_next/preds_gru.csv
+      hash: md5
+      md5: f78f7e076749540e98f293c4adeac4cc
+      size: 199382
+    - path: energy_load_next/preds_lstm.csv
+      hash: md5
+      md5: f703f7b2d28fa5a9a2de554997556a25
+      size: 201627
+    - path: energy_load_next/preds_xgb.csv
+      hash: md5
+      md5: 2467e189a3e3d2eff164c7755f39f27e
+      size: 206952
+    - path: energy_load_next/y_scaler.joblib
+      hash: md5
+      md5: 98a0b84aa1075583701780d6445d4eea
+      size: 719
