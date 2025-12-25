@@ -13,3 +13,5 @@ matplotlib>=3.7
 
 # Experiment tracking
 mlflow>=2.0
+
+evidently
