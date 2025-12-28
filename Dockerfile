@@ -27,4 +27,4 @@ COPY . .
 RUN mkdir -p energy_load_next/models mlruns
 
 # Flexible entrypoint - users pass args at runtime
-ENTRYPOINT ["python", "train_nextstep_load3.py"]
+CMD ["sleep", "infinity"]
