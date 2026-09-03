@@ -42,4 +42,6 @@ smart_grid_dataset.csv
 
 mlflow.db
 
+grafana/data
+prometheus/data
 

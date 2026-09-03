@@ -1,3 +1,5 @@
+version: "3.9"
+
 services:
   pushgateway:
     image: prom/pushgateway:latest
@@ -22,14 +24,36 @@ services:
     container_name: grafana
     ports:
       - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+
+  mlflow:   # ✅ MUST be here (same indentation as grafana)
+    image: ghcr.io/mlflow/mlflow:latest
+    container_name: mlflow
+    ports:
+      - "5000:5000"
+    command: >
+      mlflow server
+      --backend-store-uri sqlite:///mlflow.db
+      --default-artifact-root /mlflow/artifacts
+      --host 0.0.0.0
+      --allowed-hosts '*'
+    volumes:
+      - mlflow_data:/mlflow
 
   trainer:
-    image: mlopsel          # <-- YOUR IMAGE
+    image: mlopsel
     container_name: mlops
     depends_on:
       - pushgateway
+      - mlflow
     volumes:
       - ./:/app
+      - mlflow_data:/mlflow
     command: >
       python train_nextstep_load3.py
       --csv smart_grid_dataset_ci.csv
+
+volumes:
+  grafana_data:
+  mlflow_data:

@@ -1,6 +1,6 @@
 {
   "id": null,
-  "uid": null,
+  "uid": "ef8g0ozrfcxkwc",
   "title": "ML Training Monitoring",
   "timezone": "browser",
   "schemaVersion": 36,
@@ -11,7 +11,7 @@
       "title": "XGBoost RMSE",
       "datasource": {
         "type": "prometheus",
-        "uid": "bf8frsw6mdpfka"
+        "uid": "ef8g0ozrfcxkwc"
       },
       "targets": [
         {
@@ -26,7 +26,7 @@
       "title": "LSTM RMSE",
       "datasource": {
         "type": "prometheus",
-        "uid": "bf8frsw6mdpfka"
+        "uid": "ef8g0ozrfcxkwc"
       },
       "targets": [
         {
@@ -41,7 +41,7 @@
       "title": "GRU RMSE",
       "datasource": {
         "type": "prometheus",
-        "uid": "bf8frsw6mdpfka"
+        "uid": "ef8g0ozrfcxkwc"
       },
       "targets": [
         {
@@ -56,7 +56,7 @@
       "title": "Last Training Time",
       "datasource": {
         "type": "prometheus",
-        "uid": "bf8frsw6mdpfka"
+        "uid": "ef8g0ozrfcxkwc"
       },
       "targets": [
         {

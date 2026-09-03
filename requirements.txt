@@ -16,3 +16,5 @@ mlflow>=2.0
 
 # Model monitoring
 evidently>=0.6,<0.7
+
+prometheus-client>=0.20.0
