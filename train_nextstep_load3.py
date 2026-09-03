@@ -6,12 +6,12 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 import argparse
+import time
 
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from sklearn.metrics import mean_squared_error
 
 from xgboost import XGBRegressor
-
 import joblib
 
 # ---------- TensorFlow ----------
@@ -21,7 +21,10 @@ from tensorflow.keras.callbacks import EarlyStopping
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.losses import Huber
 
-# ---------- Evidently (v0.6) ----------
+# ---------- Grafana / Prometheus ----------
+from prometheus_client import CollectorRegistry, Gauge, push_to_gateway
+
+# ---------- Evidently (UNCHANGED) ----------
 try:
     from evidently.report import Report
     from evidently.metrics import (
@@ -79,10 +82,7 @@ def build_lstm(input_shape):
         LSTM(32),
         Dense(1)
     ])
-    m.compile(
-        optimizer=Adam(learning_rate=3e-4),
-        loss=Huber(delta=1.0)
-    )
+    m.compile(optimizer=Adam(3e-4), loss=Huber())
     return m
 
 def build_gru(input_shape):
@@ -92,11 +92,21 @@ def build_gru(input_shape):
         GRU(32),
         Dense(1)
     ])
-    m.compile(
-        optimizer=Adam(learning_rate=3e-4),
-        loss=Huber(delta=1.0)
-    )
+    m.compile(optimizer=Adam(3e-4), loss=Huber())
     return m
+
+
+# ================= GRAFANA PUSH =================
+def push_metrics(metrics: dict):
+    registry = CollectorRegistry()
+
+    Gauge("model_rmse_xgb", "XGBoost RMSE", registry=registry).set(metrics["xgb_rmse"])
+    Gauge("model_rmse_lstm", "LSTM RMSE", registry=registry).set(metrics["lstm_rmse"])
+    Gauge("model_rmse_gru", "GRU RMSE", registry=registry).set(metrics["gru_rmse"])
+    Gauge("training_timestamp", "Training timestamp", registry=registry).set(time.time())
+
+    push_to_gateway("pushgateway:9091", job="mlops", registry=registry)
+
 
 
 # ================= MAIN =================
@@ -126,9 +136,8 @@ def main():
     df = df.dropna().reset_index(drop=True)
 
     split = int(len(df) * (1 - args.test_size))
-
     train_df = df.iloc[:split].copy()
-    test_df  = df.iloc[split:].copy()
+    test_df = df.iloc[split:].copy()
 
     feature_cols = [
         c for c in df.columns
@@ -137,20 +146,20 @@ def main():
     ]
 
     X_train_raw = train_df[feature_cols].values
-    X_test_raw  = test_df[feature_cols].values
+    X_test_raw = test_df[feature_cols].values
     y_train_log = train_df["target_next"].values
-    y_test_log  = test_df["target_next"].values
+    y_test_log = test_df["target_next"].values
 
     # ---------- SCALING ----------
     X_scaler = StandardScaler()
     y_scaler = MinMaxScaler()
 
     X_train = X_scaler.fit_transform(X_train_raw)
-    X_test  = X_scaler.transform(X_test_raw)
-    y_train = y_scaler.fit_transform(y_train_log.reshape(-1,1)).ravel()
+    X_test = X_scaler.transform(X_test_raw)
+    y_train = y_scaler.fit_transform(y_train_log.reshape(-1, 1)).ravel()
 
     # ================= XGBOOST =================
-    base_reg = XGBRegressor(
+    xgb = XGBRegressor(
         n_estimators=600,
         max_depth=7,
         learning_rate=0.05,
@@ -159,26 +168,70 @@ def main():
         random_state=42,
         n_jobs=-1
     )
-    base_reg.fit(X_train, y_train)
+    xgb.fit(X_train, y_train)
 
-    base_pred = base_reg.predict(X_test)
-    final_log = y_scaler.inverse_transform(base_pred.reshape(-1,1)).ravel()
-    final_pred = np.expm1(final_log)
+    xgb_log = y_scaler.inverse_transform(
+        xgb.predict(X_test).reshape(-1, 1)
+    ).ravel()
+
+    xgb_pred = np.expm1(xgb_log)
     y_test_real = np.expm1(y_test_log)
 
-    # ================= EVIDENTLY =================
+    xgb_rmse = rmse(y_test_real, xgb_pred)
+
+    # ================= LSTM / GRU BASELINES =================
+    seq_len = 96
+    X_seq_tr, y_seq_tr = make_sequences(X_train, y_train, seq_len)
+    y_test_scaled = y_scaler.transform(y_test_log.reshape(-1,1)).ravel()
+    X_seq_te, y_seq_te = make_sequences(X_test, y_test_scaled, seq_len)
+    y_seq_real = np.expm1(y_scaler.inverse_transform(y_seq_te.reshape(-1,1)).ravel())
+
+    
+
+    early = EarlyStopping(patience=5, restore_best_weights=True)
+
+    lstm = build_lstm((seq_len, X_seq_tr.shape[-1]))
+    lstm.fit(X_seq_tr, y_seq_tr, epochs=25, batch_size=64,
+             validation_split=0.1, callbacks=[early], verbose=0)
+
+    lstm_log = y_scaler.inverse_transform(
+        lstm.predict(X_seq_te).reshape(-1, 1)
+    ).ravel()
+    lstm_pred = np.expm1(lstm_log)
+    lstm_rmse = rmse(y_seq_real, lstm_pred)
+
+    gru = build_gru((seq_len, X_seq_tr.shape[-1]))
+    gru.fit(X_seq_tr, y_seq_tr, epochs=25, batch_size=64,
+            validation_split=0.1, callbacks=[early], verbose=0)
+
+    gru_log = y_scaler.inverse_transform(
+        gru.predict(X_seq_te).reshape(-1, 1)
+    ).ravel()
+    gru_pred = np.expm1(gru_log)
+    gru_rmse = rmse(y_seq_real, gru_pred)
+
+    # ================= SAVE METRICS =================
+    metrics_df = pd.DataFrame({
+        "model": ["XGBoost", "LSTM", "GRU"],
+        "RMSE": [xgb_rmse, lstm_rmse, gru_rmse]
+    })
+    metrics_df.to_csv(outdir / "metrics.csv", index=False)
+
+    print(metrics_df)
+
+    # ================= EVIDENTLY (UNCHANGED) =================
     if EVIDENTLY_AVAILABLE:
         reference_df = train_df.copy()
         reference_df["target"] = np.expm1(train_df["target_next"])
         reference_df["prediction"] = np.expm1(
             y_scaler.inverse_transform(
-                base_reg.predict(X_train).reshape(-1,1)
+                xgb.predict(X_train).reshape(-1, 1)
             ).ravel()
         )
 
         current_df = test_df.copy()
         current_df["target"] = y_test_real
-        current_df["prediction"] = final_pred
+        current_df["prediction"] = xgb_pred
 
         try:
             reg_report = Report(metrics=[
@@ -186,33 +239,32 @@ def main():
                 RegressionErrorDistribution()
             ])
             reg_report.run(reference_data=reference_df, current_data=current_df)
-            reg_report.save_html(
-                str(outdir / "evidently_regression_report.html")
-            )
-            print("✓ Evidently regression report generated")
+            reg_report.save_html(str(outdir / "evidently_regression_report.html"))
 
-            drift_report = Report(metrics=[
-                DataDriftTable()
-            ])
+            drift_report = Report(metrics=[DataDriftTable()])
             drift_report.run(reference_data=reference_df, current_data=current_df)
-            drift_report.save_html(
-                str(outdir / "evidently_drift_report.html")
-            )
-            print("✓ Evidently data drift report generated")
+            drift_report.save_html(str(outdir / "evidently_drift_report.html"))
 
         except Exception as e:
             print("Evidently runtime error:", e)
 
-    else:
-        print("Evidently not available — skipped")
+    # ================= GRAFANA PUSH =================
+    try:
+        push_metrics({
+            "xgb_rmse": xgb_rmse,
+            "lstm_rmse": lstm_rmse,
+            "gru_rmse": gru_rmse
+        })
+    except Exception as e:
+        print(f"Warning: Failed to push metrics to Prometheus: {e}")
 
-    # ================= SAVE =================
-    joblib.dump(base_reg, outdir / "xgb_model.joblib")
+    # ================= SAVE ARTIFACTS =================
+    joblib.dump(xgb, outdir / "xgb_model.joblib")
     joblib.dump(X_scaler, outdir / "X_scaler.joblib")
     joblib.dump(y_scaler, outdir / "y_scaler.joblib")
     joblib.dump(feature_cols, outdir / "feature_cols.joblib")
 
-    print("\n=== TRAINING + EVIDENTLY COMPLETED SUCCESSFULLY ===")
+    print("\n=== TRAINING + BASELINES + EVIDENTLY + GRAFANA COMPLETED ===")
 
 
 if __name__ == "__main__":
